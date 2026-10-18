@@ -1,0 +1,243 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>我的专属二次元少年 (动作版)</title>
+    <style>
+        body { margin: 0; overflow: hidden; background-color: #1a1a1a; }
+        canvas { display: block; }
+        #ui-layer {
+            position: absolute;
+            bottom: 20px;
+            width: 100%;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 15px;
+            z-index: 10;
+        }
+        #action-btns {
+            display: flex;
+            gap: 10px;
+        }
+        .action-btn {
+            padding: 8px 16px;
+            border-radius: 20px;
+            border: none;
+            background: rgba(255, 255, 255, 0.2);
+            color: white;
+            cursor: pointer;
+            backdrop-filter: blur(5px);
+            transition: 0.3s;
+        }
+        .action-btn:hover { background: rgba(255, 255, 255, 0.4); }
+        #chat-container {
+            display: flex;
+            gap: 10px;
+            width: 80%;
+            max-width: 600px;
+        }
+        #chat-input {
+            flex: 1;
+            padding: 12px;
+            border-radius: 8px;
+            border: none;
+            outline: none;
+            background: rgba(255, 255, 255, 0.9);
+        }
+        #send-btn {
+            padding: 12px 24px;
+            border-radius: 8px;
+            border: none;
+            background: #10b981;
+            color: white;
+            font-weight: bold;
+            cursor: pointer;
+        }
+        #loading {
+            position: absolute;
+            top: 50%; left: 50%; transform: translate(-50%, -50%);
+            color: white; font-family: sans-serif; font-size: 20px;
+        }
+    </style>
+    <script type="importmap">
+        {
+            "imports": {
+                "three": "https://fastly.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+                "three/addons/": "https://fastly.jsdelivr.net/npm/three@0.160.0/examples/jsm/",
+                "@pixiv/three-vrm": "https://fastly.jsdelivr.net/npm/@pixiv/three-vrm@3.0.0/lib/three-vrm.module.js"
+            }
+        }
+    </script>
+</head>
+<body>
+    <div id="loading">正在加载模型... (请确保网络畅通)</div>
+    
+    <div id="ui-layer">
+        <div id="action-btns">
+            <button class="action-btn" onclick="triggerAction('wave')">👋 招手</button>
+            <button class="action-btn" onclick="triggerAction('nod')">🙂 点头</button>
+            <button class="action-btn" onclick="triggerAction('shake')">🙅‍♂️ 摇头</button>
+        </div>
+        <div id="chat-container">
+            <input type="text" id="chat-input" placeholder="对他说点什么...（按回车发送）">
+            <button id="send-btn">发送</button>
+        </div>
+    </div>
+    
+    <script type="module">
+        import * as THREE from 'three';
+        import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+        import { VRMLoaderPlugin, VRMUtils } from '@pixiv/three-vrm';
+
+        const scene = new THREE.Scene();
+        scene.background = new THREE.Color(0x2b2b2b);
+        // 稍微加个渐变背景或者光照效果会更好看
+        const camera = new THREE.PerspectiveCamera(30, window.innerWidth / window.innerHeight, 0.1, 20);
+        camera.position.set(0, 1.25, 2.8);
+
+        const renderer = new THREE.WebGLRenderer({ antialias: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        document.body.appendChild(renderer.domElement);
+
+        const light = new THREE.DirectionalLight(0xffffff, Math.PI);
+        light.position.set(1, 1, 1).normalize();
+        scene.add(light);
+        scene.add(new THREE.AmbientLight(0xffffff, 0.6));
+
+        let currentVrm = null;
+        let mixer = null;
+        const clock = new THREE.Clock();
+        const loader = new GLTFLoader();
+        loader.register((parser) => new VRMLoaderPlugin(parser));
+
+        // ⚠️ 替换成你自己模型的名字
+        const modelUrl = './kuru.vrm'; 
+
+        // 骨骼动作状态
+        let actionState = 'idle';
+        let actionTime = 0;
+
+        loader.load(
+            modelUrl,
+            (gltf) => {
+                const vrm = gltf.userData.vrm;
+                scene.add(vrm.scene);
+                VRMUtils.rotateVRM0(vrm);
+                currentVrm = vrm;
+                document.getElementById('loading').style.display = 'none';
+            },
+            (progress) => console.log('加载中...', 100.0 * (progress.loaded / progress.total), '%'),
+            (error) => {
+                console.error(error);
+                document.getElementById('loading').innerText = "加载失败，请检查路径或网络";
+            }
+        );
+
+        // 触发动作的全局函数
+        window.triggerAction = function(type) {
+            if (!currentVrm || actionState !== 'idle') return;
+            actionState = type;
+            actionTime = 0;
+        };
+
+        // 聊天逻辑
+        function getAIResponse(text) {
+            if (text.includes("你好") || text.includes("hi")) return "哼，你终于来了。我还以为你今天不来找我了呢。";
+            if (text.includes("名字")) return "我？我叫黑星。随便起的名字，你记住就行。";
+            if (text.includes("喜欢")) return "笨蛋，我才没有喜欢你！只是这里太无聊了而已。";
+            return "你在说什么啊？我听不懂。不过，你愿意多陪我说说话吗？";
+        }
+
+        let isSpeaking = false;
+        const chatInput = document.getElementById('chat-input');
+        const sendBtn = document.getElementById('send-btn');
+
+        function sendMessage() {
+            const text = chatInput.value.trim();
+            if (!text || isSpeaking) return;
+            chatInput.value = "";
+            const reply = getAIResponse(text);
+            
+            // 逻辑联动：如果回复里有"笨蛋"或"不"，就触发摇头
+            if (reply.includes("笨蛋") || reply.includes("不")) {
+                triggerAction('shake');
+            } else if (reply.includes("你好")) {
+                triggerAction('wave');
+            }
+
+            if ('speechSynthesis' in window) {
+                isSpeaking = true;
+                const utterance = new SpeechSynthesisUtterance(reply);
+                utterance.lang = 'zh-CN';
+                utterance.rate = 1.1;
+                utterance.pitch = 1.1; 
+                utterance.onend = () => { isSpeaking = false; };
+                window.speechSynthesis.speak(utterance);
+            }
+        }
+
+        sendBtn.addEventListener('click', sendMessage);
+        chatInput.addEventListener('keypress', (e) => { if (e.key === 'Enter') sendMessage(); });
+
+        // ================= 核心：动作骨骼动画逻辑 =================
+        function animate() {
+            requestAnimationFrame(animate);
+            const delta = clock.getDelta();
+
+            if (currentVrm) {
+                currentVrm.update(delta);
+                const time = Date.now() * 0.001;
+                
+                // 获取骨骼节点（VRMHumanBoneName）
+                const humanoid = currentVrm.humanoid;
+                const head = humanoid.getNormalizedBoneNode('head');
+                const rightUpperArm = humanoid.getNormalizedBoneNode('rightUpperArm');
+                const rightLowerArm = humanoid.getNormalizedBoneNode('rightLowerArm');
+
+                // 基础待机呼吸
+                currentVrm.scene.position.y = Math.sin(time * 1.5) * 0.01;
+
+                if (actionState !== 'idle') {
+                    actionTime += delta;
+                }
+
+                // 招手动作 (3秒)
+                if (actionState === 'wave') {
+                    // 抬起右臂
+                    rightUpperArm.rotation.z = -1.2; 
+                    rightLowerArm.rotation.z = -1.5 + Math.sin(actionTime * 15) * 0.3;
+                    
+                    if (actionTime > 3) resetAction(rightUpperArm, rightLowerArm);
+                } 
+                // 点头动作 (2秒)
+                else if (actionState === 'nod') {
+                    head.rotation.x = Math.sin(actionTime * 10) * 0.2;
+                    if (actionTime > 2) { head.rotation.x = 0; actionState = 'idle'; }
+                }
+                // 摇头动作 (2秒)
+                else if (actionState === 'shake') {
+                    head.rotation.y = Math.sin(actionTime * 12) * 0.3;
+                    if (actionTime > 2) { head.rotation.y = 0; actionState = 'idle'; }
+                }
+            }
+            renderer.render(scene, camera);
+        }
+
+        function resetAction(upperArm, lowerArm) {
+            upperArm.rotation.z = 0;
+            lowerArm.rotation.z = 0;
+            actionState = 'idle';
+        }
+
+        animate();
+
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        });
+    </script>
+</body>
+</html>
